@@ -1,0 +1,253 @@
+---
+output: html_document
+---
+Name:Elva Yang
+Date:12/12/2015
+Purpose/Project: Statistics Sample for Job Application: 
+Stanford Research Data Analyst 1 (Requisition# 69071)
+knitr 
+@ R version 3.1.2
+
+```{r}
+### Import Datasets ###
+demo <- read.csv("~/Dropbox/Kowalski/Stanford/data1_age_sex_race.csv")
+SRH <- read.csv("~/Dropbox/Kowalski/Stanford/data2_SRH.csv")
+treatment <- read.csv("~/Dropbox/Kowalski/Stanford/data3a_weight_trt.csv")
+control <- read.csv("~/Dropbox/Kowalski/Stanford/data3b_weight_con.csv")
+
+### Library ###
+# data cleaning packages
+install.packages("plyr")
+install.packages ('tidyr')
+install.packages('dplyr')
+install.packages('sqldf')
+
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(sqldf)
+
+
+### CLEANING DATASET: Demo ##############################################
+#Problem in dataset Demo: 
+# P1. Inconsistency of the identifier with other datasets
+# P2. Multiple variables in one column 
+#########################################################################
+# Solution to P1: renaming the identifier
+names(demo)[names(demo)=="subject_ID"] <- "Id" 
+
+# Solution to P2: Splitting the variables
+# First, selecting rows that have "FEMALE"" and selecting rows have "MALE". 
+# Then using "SEPERATE" to split the columns by width.  
+
+female<-sqldf('Select * from demo where SexAge_Race LIKE "FEMALE%"')
+female<-separate(female, SexAge_Race, c("Sex","Age"), sep=6) # The width of F-E-M-A-L-E is 6
+female<-separate(female, Age, c("Age","Race"), sep= "_")
+
+male<-sqldf('Select * from demo where SexAge_Race LIKE "MALE%"')
+male<-separate(male, SexAge_Race, c("Sex","Age"), sep=4) # the width of male is 4
+male<-separate(male, Age, c("Age","Race"), sep= "_")
+
+# Next, combining the female and male datasets back
+demo_clean<-rbind(female, male)
+
+### CLEANING DATASET: SRH #################################################
+# Problem in dataset SRH: 
+# P1. Inconsistency of the identifier with other datasets
+# P2. Duplicated, ambiguous and inconsistent observations
+# P3. Variables are stored in both rows and columns.
+##########################################################################
+
+# Solution to P1: Renaming the identifier
+names(SRH)[names(SRH)=="id"] <- "Id"
+
+# Solution to P2: Finding the duplicated/ambiguous observation and eliminate them
+SRH_ambiguous<-sqldf('SELECT Id, count(*) FROM SRH group by Id having count (*)>2')
+SRH_clean<-sqldf('SELECT * from SRH J WHERE NOT EXISTS (select A.Id from SRH_ambiguous A where A.Id=J.Id)')
+
+# Solution to P3: Reshaping the data table to have all relevant variables as columns
+SRH_clean<-spread(SRH_clean, TIME, SRH)
+
+### CLEANING DATASET: treatment and control #################################
+# Problem in datasets: 
+# P1. Inconsistency of the identifier with other datasets
+# P2. A single observational unit is stored in two tables.
+# P2. Empty information in rows
+# P3. Duplicated, ambiguous and inconsistent observations
+#############################################################################
+
+# Solution to P1: renaming the identifier
+names(control)[names(control)=="obs_ID"] <- "Id"
+
+# Solution to P2: combing the datasets
+weight<-rbind(treatment, control)
+
+# Solution to P3: Seperating the dataset into two dataset for cleaning 
+#one with Id and PRE_WEIGHT and the other one with Id and POST_WEIGHT
+
+# Then, delete the empty rows in both tables by selecting the rows are not NULL or NA
+weight_pre<-sqldf('SELECT Id, PRE_WEIGHT FROM weight WHERE Pre_WEIGHT is not null')
+weight_post<-sqldf('SELECT Id, POST_WEIGHT FROM weight WHERE Post_WEIGHT is not null')
+
+# Next, joining the seperated tables back to one
+weight_join<-inner_join(weight_pre, weight_post, by='Id')
+
+# Solution to P4:Finding the duplicated/ambiguous observation and eliminate them
+weight_ambiguous<-sqldf('SELECT Id, count(*) FROM weight_join group by Id having count (*)>1')
+weight_clean<-sqldf('SELECT * from weight_join J WHERE NOT EXISTS (select A.Id from weight_ambiguous A where A.Id=J.Id)')
+
+####### After cleaning all 4 datasets, join them by the identifier--"Id"
+data<-inner_join(demo_clean, SRH_clean,by ="Id")
+data<-inner_join(data,weight_clean,by="Id")
+
+### Preparing the cleaned data for analysis:
+# converting the variables into a proper data type with the function
+convert.magic <- function(obj,types){
+    for (i in 1:length(obj)){
+        FUN <- switch(types[i],character = as.character, 
+                                   numeric = as.numeric, 
+                                   factor = as.factor)
+        obj[,i] <- FUN(obj[,i])
+    }
+    obj
+}
+
+# using the functions to convert the data to its proper format
+str(data)  
+data <- convert.magic(data,c('character','factor','numeric', 'factor', 'factor', 'factor', 'factor', 'numeric', 'numeric'))
+
+## Recoding for the variables
+#Sex
+data$Sex_f[data$Sex=="MALE"] <- "1"
+data$Sex_f[data$Sex=="FEMALE"] <- "2"
+
+#SRH_Pre
+data$SRH_Pre[data$PRE=="Excellent"] <- "5"
+data$SRH_Pre[data$PRE=="Good"] <- "4"
+data$SRH_Pre[data$PRE=="Satisfactory"] <- "3"
+data$SRH_Pre[data$PRE=="Poor"] <- "2"
+data$SRH_Pre[data$PRE=="Very Poor"] <- "1"
+
+#SRH_Post
+data$SRH_Post[data$POST=="Excellent"] <- "5"
+data$SRH_Post[data$POST=="Good"] <- "4"
+data$SRH_Post[data$POST=="Satisfactory"] <- "3"
+data$SRH_Post[data$POST=="Poor"] <- "2"
+data$SRH_Post[data$POST=="Very Poor"] <- "1"
+
+# compute differences
+data<-mutate(data, Weight_diff= PRE_WEIGHT - POST_WEIGHT)
+data <- convert.magic(data,c('character','factor','numeric', 'factor', 'factor', 'factor', 'factor', 'numeric', 'numeric','factor', 'numeric', 'numeric','numeric' ))
+data<-mutate(data,SRH_diff = SRH_Pre - SRH_Post)
+
+# Age group
+data$Age_group[data$Age<21] <-"0-20"
+data$Age_group[data$Age>20 & data$Age <41] <-"21-40"
+data$Age_group[data$Age>40 & data$Age <61] <-"41-60"
+data$Age_group[data$Age>60] <-"60+"
+data <- convert.magic(data,c('character','factor','numeric', 'factor', 'factor', 'factor', 'factor', 'numeric','numeric', 'factor', 'numeric','numeric','numeric', 'numeric', 'factor'))
+
+### OPTIONAL:
+# Now I can separate the dataset by selecting the treatment groups and the control group (optional)
+# write.csv(data, file ="~/Dropbox/Kowalski/Stanford/data.csv" ) # save a copy of a complete and cleaned dataset
+
+treatment<-sqldf('select * from data where trt=1')
+control<-sqldf('select * from data where trt=0')
+
+### GRAPHICS ###################################################
+# 4 figures arranged in 2 rows and 2 columns
+par(mfrow=c(2,2))
+hist(control$Weight_diff, xlab="Weight Difference(Before-After)",  main=" Weight Difference in Control Group")
+hist(treatment$Weight_diff, xlab="Weight Difference(Before-After)", main=" Weight Difference in Treatment Group")
+hist(control$SRH_diff,  xlab="SRH Difference(Before-After)", main=" SRH Difference in Control Group")
+hist(treatment$SRH_diff, xlab="SRH Difference(Before-After)",main="SRH Difference in Treatment Group")
+
+############################################################################
+#######################               DATA ANALYSIS       ##################
+############################################################################
+
+# brief summary of the data
+mean(treatment$Weight_diff)
+sd(treatment$Weight_diff)
+mean(control$Weight_diff)
+sd(control$Weight_diff)
+sqrt(var(treatment$Weight_diff)/length(treatment$Weight_diff))
+sqrt(var(control$Weight_diff)/length(control$Weight_diff))
+
+#############################################################################
+#######################             Independent 2-group t-test      #########
+#############################################################################
+# Frist, testing for asssmptions:
+# 1). Testing for Normality:
+shapiro.test(treatment$Weight_diff) # The assumption of normaility is violated (p-value=4.083e-07)
+shapiro.test(control$Weight_diff) # The assumption of normaility is violated (on borderline, p-value=0.046)
+shapiro.test(treatment$SRH_diff) # The assumption of normaility is violated (p-value < 2.2e-16)
+shapiro.test(control$SRH_diff)# The assumption of normaility is violated (p-value < 2.2e-16)
+
+# 2). Testing for Constant Variances b/w group:
+var.test(treatment$Weight_diff, control$Weight_diff)
+var.test(treatment$SRH_diff, control$SRH_diff)
+
+# The assumption of constant variance between two groups is violated for both Weight and SRH variables.
+# Thus, the non parametric test would be considered.
+# t.test(trt$Weight_diff, con$Weight_diff, var.equal=TRUE) # Two Sample t-test; however, in this case, we use the welch's approximate test for adjusted the unequal variance
+# t.test(trt$SRH_diff, con$SRH_diff, var.equal=TRUE)
+t.test(control$Weight_diff, treatment$Weight_diff, var.equal=FALSE)# Welch Two Sample t-test for unequal variance
+t.test(control$SRH_diff, treatment$SRH_diff,var.equal=FALSE) # Welch Two Sample t-test 
+
+#Alternatives to the T-test  (In this data, since the assumption of normality and constant variances were not met, it is logical to use non-pararmetric t-test instead. However, in this case, because of we have large sample size, using either test would give us signiifcant p-values )
+wilcox.test(data$Weight_diff ~ data$trt, data=data)
+wilcox.test(data$SRH_diff ~ data$trt, data=data)
+
+# Mean of the Mean Difference (from t-test output)
+mean_weight_diff=9.00-0.77
+mean_weight_diff
+mean_SRH_diff=-0.483 -(-0.007)
+mean_SRH_diff
+```
+
+```{r}
+###################################################################################################
+#######################  mixed factorial design with repeated measures              ###############
+###################################################################################################
+
+attach(data)
+# 2 X 2 Factorial Mixed Factorial design with repeated measures for weight
+data_weight<-select(data,Id, Race, Age_group,Sex,trt,PRE_WEIGHT, POST_WEIGHT)
+weight_long <- gather(data_weight,Time, Weight,PRE_WEIGHT:POST_WEIGHT)
+weight_long$Id <- factor(weight_long$Id)
+with(weight_long, tapply(Weight, list(trt, Time),mean))
+with(weight_long, boxplot (Weight~trt+Time, names=c("Control:Pre","Control:Post","Treatment:Pre","Treatment:Post"),ylab="Weight", main="Pre and Post Weight of Two Treatment Groups", las=3 ))
+
+# Model Assumptions
+# Homogeneity Tests
+levene.test(weight_long$Weight~weight_long$trt)
+# Normaility: the data is big. I previously tested with noramlity in t-test procedures.
+# Sphericity: We only have two groups. It won't give proper Sphericity test (checked it in SPSS, Mauchy'Test) 
+# Weight
+aov.weight=aov(Weight~trt*Time + Error(Id/Time), data=weight_long) # ANOVA repeated measures for weight
+summary(aov.weight)
+```
+
+```{r}
+# 2 X 2 Factorial Mixed Factorial design with repeated measures for SRH
+data_SRH<-select(data,Id, Race, Age_group,Sex,trt,SRH_Pre, SRH_Post)
+SRH_long <- gather(data_SRH,Time,SRH,SRH_Pre:SRH_Post)
+SRH_long$Id <- factor(SRH_long$Id)
+with(SRH_long, tapply(SRH, list(trt, Time),mean))
+
+# Assumptions
+#Homogeneity Tests
+levene.test(SRH_long$SRH~SRH_long$trt)
+# Normaility: the data is big. I previously tested with noramlity in t-test procedures.
+# Sphericity: We only have two groups. It won't give proper Sphericity test (checked it in SPSS) 
+aov.SRH=aov(SRH~trt*Time + Error(Id/Time), data=SRH_long) # ANOVA repeated measures for SRH
+summary(aov.SRH)
+
+# Interaction plots (Weight and SRH)
+par(mfrow=c(2,2))
+with(weight_long, boxplot (Weight~trt+Time, names=c("Control:Pre","Control:Post","Treatment:Pre","Treatment:Post"),ylab="Weight", main="Pre and Post Weight of Two Treatment Groups", las=3 ))
+interaction.plot(weight_long$Time, weight_long$trt, weight_long$Weight, xlab=" Pre-Post", ylab="Mean of Weight", type="b", col=c(1:2), leg.bty="o", leg.bg="beige", trace.label="Treatments", lwd=2, pch=c(18,22),main="Interaction Plot of Pre and Post Weight ")
+with(SRH_long, boxplot(SRH~trt+Time, names=c("Control:Pre","Control:Post","Treatment:Pre","Treatment:Post"),ylab="SRH scores", main="Pre and Post SRH scores of Two Treatment Groups", las=3 ))
+interaction.plot(SRH_long$Time, SRH_long$trt, SRH_long$SRH, xlab=" Pre-Post", ylab="Mean of SRH Scores", type="b", col=c(1:2), leg.bty="o", leg.bg="beige", trace.label="Treatments", lwd=2, pch=c(18,22),main="Interaction Plot of Pre and Post SRH Scores")
+```

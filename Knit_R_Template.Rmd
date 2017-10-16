@@ -1,0 +1,84 @@
+---
+output: html_document
+---
+Name:Elva Yang
+Date:
+Purpose/Project: 
+knitr 
+@ R version 3.4.2
+
+```{r}
+rm(list = ls())
+#install.packages('tidyquant')
+#install.packages('readxl')
+#install.packages('lime')
+#install.packages('h2o')
+#install.packages('dplyr')
+#install.packages('knitr')
+#install.packages('rmarkdown')
+library(tidyquant)
+library(readxl)
+library(readr)
+library(lime)
+library(h2o)
+library(dplyr)
+library(knitr)
+library(rmarkdown)
+```
+
+#Import Data
+
+```{r load_data}
+WA_Fn_UseC_HR_Employee_Attrition <- read_csv("~/Desktop/WA_Fn-UseC_-HR-Employee-Attrition.csv")
+View(WA_Fn_UseC_HR_Employee_Attrition)
+#DataPath<-file.path("Users/ejyang06/Desktop/WA_Fn-UseC_-HR-Employee-Attrition.csv")
+#DataPath
+#str(DataPath)
+#Data<-read.csv(path=DataPath)
+Data<-WA_Fn_UseC_HR_Employee_Attrition
+View(Data)
+attach(Data)
+```
+
+
+# Data Exploratory
+``` {r data explor}
+summary(Data)
+str(Data)
+Data[1:10,] %>%
+    knitr::kable(caption = "First 10 rows")
+
+Data <- Data %>%
+    mutate_if(is.character, as.factor) %>%
+    select(Attrition, everything())
+
+```
+
+
+
+#Data Visualization
+``` {r data clean}
+
+
+
+```
+
+# Data Cleaning
+```{r data viz}
+
+
+```
+
+
+# Analysis
+``` {r modeling}
+
+
+```
+
+
+## Discussion
+
+
+
+

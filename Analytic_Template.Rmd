@@ -1,0 +1,190 @@
+---
+output: html_document
+---
+Name:Elva Yang
+Date:
+Purpose/Project: 
+knitr 
+@ R version 3.4.2
+
+```{r}
+rm(list = ls())
+#install.packages('tidyquant')
+#install.packages('readxl')
+#install.packages('lime')
+#install.packages('h2o')
+#install.packages('dplyr')
+#install.packages('knitr')
+#install.packages('rmarkdown')
+install.packages("tibble")
+library(tidyquant)
+library(readxl)
+library(readr)
+library(lime)
+library(h2o)
+library(dplyr)
+library(knitr)
+library(rmarkdown)
+library(tibble)
+```
+
+#Import Data
+
+```{r load_data}
+WA_Fn_UseC_HR_Employee_Attrition <- read_csv("~/Desktop/WA_Fn-UseC_-HR-Employee-Attrition.csv")
+View(WA_Fn_UseC_HR_Employee_Attrition)
+#DataPath<-file.path("Users/ejyang06/Desktop/WA_Fn-UseC_-HR-Employee-Attrition.csv")
+#DataPath
+#str(DataPath)
+#Data<-read.csv(path=DataPath)
+Data<-WA_Fn_UseC_HR_Employee_Attrition
+View(Data)
+attach(Data)
+```
+
+
+
+
+# Data Exploratory
+``` {r data explor}
+summary(Data)
+str(Data)
+Data[1:10,] %>%
+    knitr::kable(caption = "First 10 rows")
+
+Data <- Data %>%
+    mutate_if(is.character, as.factor) %>%
+    select(Attrition, everything())
+glimpse(Data)
+
+```
+
+
+
+#Data Visualization
+``` {r data viz}
+
+
+
+```
+
+# Data Cleaning
+```{r data clean}
+
+
+```
+
+
+# Analysis
+``` {r modeling}
+h2o.init()
+#split data into Train/Val/Test
+Data_h2o<-as.h2o(Data)
+split_h2o<-h2o.splitFrame(Data_h2o,c(0.7,0.15),seed=1234)
+split_h2o
+
+train_h2o<-h2o.assign(split_h2o[[1]],"train") # 70%
+val_h2o<-h2o.assign(split_h2o[[2]],"Val")  # 15%
+test_h2o<-h2o.assign(split_h2o[[3]],"test") # 15%
+```
+
+
+```{r parameters}
+y <- "Attrition" # target name
+
+x<-setdiff(names(train_h2o),y) #feature names
+
+# Run the automated machine learning 
+
+# Run the automated machine learning 
+automl_models_h2o <- h2o.automl(
+    x = x, #features
+    y = y, #target
+    training_frame    = train_h2o,
+    leaderboard_frame = val_h2o,
+    max_runtime_secs  = 30
+    )
+
+# Extract leader model
+automl_leader <- automl_models_h2o@leader
+
+
+# Predict on hold-out set, test_h2o
+pred_h2o <- h2o.predict(object = automl_leader, newdata = test_h2o)
+pred_h2o
+
+# Performance
+# Prep for performance assessment
+test_performance <- test_h2o %>%
+    tibble::as_tibble() %>%
+    select(y) %>%
+    add_column(pred = as.vector(pred_h2o$predict)) %>%
+    mutate_if(is.character, as.factor)
+
+test_performance
+
+
+# Confusion table counts
+test_performance %>%
+    table() 
+
+# Confusion table percentages
+test_performance %>%
+    table() %>%
+    prop.table()
+
+# We had 7% Type I Error (predicted to quit, but actually stayed) and 
+# 5% Type II Error (predicted to stay, but actually quit).
+
+
+# Overall performance
+test_performance %>%
+    mutate(correct = case_when(
+        Attrition == pred ~ 1,
+        TRUE ~ 0
+    )) %>%
+    summarize(correct_pct = sum(correct) / n())
+
+
+```
+
+
+
+```{R Lime}
+
+class(automl_leader)
+# Setup lime::model_type() function for h2o
+model_type.H2OBinomialModel <- function(x, ...) {
+    # Function tells lime() what model type we are dealing with
+    # 'classification', 'regression', 'survival', 'clustering', 'multilabel', etc
+    #
+    # x is our h2o model
+    
+    return("classification")
+}
+
+
+
+# Setup lime::predict_model() function for h2o
+predict_model.H2OBinomialModel <- function(x, newdata, type, ...) {
+    # Function performs prediction and returns dataframe with Response
+    #
+    # x is h2o model
+    # newdata is data frame
+    # type is only setup for data frame
+    
+    pred <- h2o.predict(x, as.h2o(newdata))
+    
+    # return probs
+    return(as.data.frame(pred[,-1]))
+    
+}
+
+
+```
+
+## Discussion
+
+
+
+

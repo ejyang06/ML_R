@@ -1,0 +1,18 @@
+---
+output: html_document
+---
+Name:Elva Yang
+Date:
+Purpose/Project: 
+knitr 
+@ R version 3.4.2
+
+```{r}
+#updateing RStudio and every packages
+update.packages(ask = FALSE)
+packs = as.data.frame(installed.packages(.libPaths()[1]), stringsAsFactors = F)
+install.packages(packs$Package)
+#Unfortunately this won’t update packages
+#installed by devtools::install_github()
+
+```

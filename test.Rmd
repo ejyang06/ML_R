@@ -1,0 +1,35 @@
+---
+title: "Testing"
+author: "ElvaYang"
+date: "10/15/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+rm(list = ls())
+#devtools::session_info()
+#install/load packages
+packages_lib<- c("dplyr", "data.table", "ggplot2","reshape2","readr","caret","sqldf","readxl", "tidyquant","wordcloud","rmarkdown", "knitr",                 "devtools","readxl")
+packages_ML<- c("e1071", "neuralnet", "C5.O", "cvAUC", "lime","h2o")
+
+install.packages(packages_lib)
+install.packages(packages_ML)
+
+# Load packages
+lapply(packages_lib, require, character.only = TRUE)
+lapply(packages_ML, require, character.only = TRUE)
+
+# Github pakcages
+library(devtools)
+install_github("h2oai/h2o-3/h2o-r/ensemble/h2oEnsemble-package")
+```
