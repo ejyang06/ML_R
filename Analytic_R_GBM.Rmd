@@ -1,0 +1,535 @@
+---
+output: html_document
+---
+Name:Elva Yang
+Date:
+Purpose/Project: 
+knitr 
+@ R version 3.4.2
+
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+```
+
+#load packages
+```{r}
+rm(list = ls())
+#devtools::session_info()
+
+#install/load packages
+packages_lib<- c("dplyr", "data.table", "ggplot2","reshape2","readr","caret","sqldf","readxl", "tidyquant","wordcloud","rmarkdown", "knitr","devtools","readxl")
+packages_ML<- c("e1071", "neuralnet", "cvAUC", "lime","h2o","h2oEnsemble")
+
+# install.packages(packages_lib)
+# install.packages(packages_ML)
+
+# Load packages
+lapply(packages_lib, require, character.only = TRUE)
+lapply(packages_ML, require, character.only = TRUE)
+
+# Github pakcages
+library(devtools)
+# install_github("h2oai/h2o-3/h2o-r/ensemble/h2oEnsemble-package")
+library(knitr)
+library(dplyr)
+```
+
+#Import Data
+
+```{r load_data}
+WA_Fn_UseC_HR_Employee_Attrition <- read.csv("~/Desktop/Git/ML_R/WA_Fn-UseC_-HR-Employee-Attrition.csv")
+Data<-WA_Fn_UseC_HR_Employee_Attrition
+View(Data)
+attach(Data)
+```
+
+
+# Data Exploratory
+``` {r data explor}
+summary(Data)
+str(Data)
+Data[1:10,] %>%
+    knitr::kable(caption = "First 10 rows")
+
+Data <- Data %>%
+    mutate_if(is.character, as.factor) %>%
+    select(Attrition, everything())
+
+```
+
+
+
+#Data Visualization
+``` {r data clean}
+
+
+
+```
+
+# Data Cleaning
+```{r data viz}
+
+
+```
+
+
+# Analysis Setup
+``` {r modeling}
+# Init h2o
+h2o.init()
+h2o.removeAll() 
+
+#split data into Train/Val/Test
+Data_h2o<-as.h2o(Data)
+split_h2o<-h2o.splitFrame(Data_h2o,c(0.7,0.15),seed=1234)
+split_h2o
+
+train_h2o<-h2o.assign(split_h2o[[1]],"train") # 70%
+valid_h2o<-h2o.assign(split_h2o[[2]],"valid")  # 15%
+test_h2o<-h2o.assign(split_h2o[[3]],"test") # 15%
+
+y <- "Attrition" # target name
+x<-setdiff(names(train_h2o),y) #feature names
+
+```
+
+# Analysis Set up - learners library
+```{r}
+
+```
+
+# Model fitting
+```{r}
+# YY model
+# GBM start ------------------------------------------
+
+## We only provide the required parameters, everything else is default
+gbm <- h2o.gbm(x = x, y = y, training_frame = train_h2o)
+
+## Show a detailed model summary
+gbm
+
+## Get the AUC on the validation set
+h2o.auc(h2o.performance(gbm, newdata = valid_h2o)) 
+
+## h2o.rbind makes a copy here, so it's better to use splitFrame with `ratios = c(0.8)` instead above
+gbm <- h2o.gbm(x = x, y = y, training_frame = h2o.rbind(train_h2o, valid_h2o), nfolds = 4, seed = 0xDECAF)
+
+## Show a detailed summary of the cross validation metrics
+## This gives you an idea of the variance between the folds
+gbm@model$cross_validation_metrics_summary
+
+## Get the cross-validated AUC by scoring the combined holdout predictions.
+## (Instead of taking the average of the metrics across the folds)
+h2o.auc(h2o.performance(gbm, xval = TRUE))
+
+## Depth 10 is usually plenty of depth for most datasets, but you never know
+hyper_params = list( max_depth = seq(1,29,2) )
+#hyper_params = list( max_depth = c(4,6,8,12,16,20) ) ##faster for larger datasets
+
+grid <- h2o.grid(
+  ## hyper parameters
+  hyper_params = hyper_params,
+  
+  ## full Cartesian hyper-parameter search
+  search_criteria = list(strategy = "Cartesian"),
+  
+  ## which algorithm to run
+  algorithm="gbm",
+  
+  ## identifier for the grid, to later retrieve it
+  grid_id="depth_grid",
+  
+  ## standard model parameters
+  x = x, 
+  y = y, 
+  training_frame = train_h2o, 
+  validation_frame = valid_h2o,
+  
+  ## more trees is better if the learning rate is small enough 
+  ## here, use "more than enough" trees - we have early stopping
+  ntrees = 10000,                                                            
+  
+  ## smaller learning rate is better
+  ## since we have learning_rate_annealing, we can afford to start with a bigger learning rate
+  learn_rate = 0.05,                                                         
+  
+  ## learning rate annealing: learning_rate shrinks by 1% after every tree 
+  ## (use 1.00 to disable, but then lower the learning_rate)
+  learn_rate_annealing = 0.99,                                               
+  
+  ## sample 80% of rows per tree
+  sample_rate = 0.8,                                                       
+
+  ## sample 80% of columns per split
+  col_sample_rate = 0.8, 
+  
+  ## fix a random number generator seed for reproducibility
+  seed = 1234,                                                             
+  
+  ## early stopping once the validation AUC doesn't improve by at least 0.01% for 5 consecutive scoring events
+  stopping_rounds = 5,
+  stopping_tolerance = 1e-4,
+  stopping_metric = "AUC", 
+  
+  ## score every 10 trees to make early stopping reproducible (it depends on the scoring interval)
+  score_tree_interval = 10                                                
+)
+
+## by default, display the grid search results sorted by increasing logloss (since this is a classification task)
+grid                                                                       
+
+## sort the grid models by decreasing AUC
+sortedGrid <- h2o.getGrid("depth_grid", sort_by="auc", decreasing = TRUE)    
+sortedGrid
+
+## find the range of max_depth for the top 5 models
+topDepths = sortedGrid@summary_table$max_depth[1:5]                       
+minDepth = min(as.numeric(topDepths))
+maxDepth = max(as.numeric(topDepths))
+minDepth
+maxDepth
+
+hyper_params = list( 
+  ## restrict the search to the range of max_depth established above
+  # max_depth = seq(minDepth,maxDepth,1),                                      
+  max_depth = seq(21,maxDepth,1), 
+  
+  ## search a large space of row sampling rates per tree
+  sample_rate = seq(0.2,1,0.01),                                             
+  
+  ## search a large space of column sampling rates per split
+  col_sample_rate = seq(0.2,1,0.01),                                         
+  
+  ## search a large space of column sampling rates per tree
+  col_sample_rate_per_tree = seq(0.2,1,0.01),                                
+  
+  ## search a large space of how column sampling per split should change as a function of the depth of the split
+  col_sample_rate_change_per_level = seq(0.9,1.1,0.01),                      
+  
+  ## search a large space of the number of min rows in a terminal node
+  min_rows = 2^seq(0,log2(nrow(train_h2o))-1,1),                                 
+  
+  ## search a large space of the number of bins for split-finding for continuous and integer columns
+  nbins = 2^seq(4,10,1),                                                     
+  
+  ## search a large space of the number of bins for split-finding for categorical columns
+  nbins_cats = 2^seq(4,12,1),                                                
+  
+  ## search a few minimum required relative error improvement thresholds for a split to happen
+  min_split_improvement = c(0,1e-8,1e-6,1e-4),                               
+  
+  ## try all histogram types (QuantilesGlobal and RoundRobin are good for numeric columns with outliers)
+  histogram_type = c("UniformAdaptive","QuantilesGlobal","RoundRobin")       
+)
+
+search_criteria = list(
+  ## Random grid search
+  strategy = "RandomDiscrete",      
+  
+  ## limit the runtime to 60 minutes
+  max_runtime_secs = 3600,         
+  
+  ## build no more than 100 models
+  max_models = 100,                  
+  
+  ## random number generator seed to make sampling of parameter combinations reproducible
+  seed = 1234,                        
+  
+  ## early stopping once the leaderboard of the top 5 models is converged to 0.1% relative difference
+  stopping_rounds = 5,                
+  stopping_metric = "AUC",
+  stopping_tolerance = 1e-3
+)
+
+grid <- h2o.grid(
+  ## hyper parameters
+  hyper_params = hyper_params,
+  
+  ## hyper-parameter search configuration (see above)
+  search_criteria = search_criteria,
+  
+  ## which algorithm to run
+  algorithm = "gbm",
+  
+  ## identifier for the grid, to later retrieve it
+  grid_id = "final_grid", 
+  
+  ## standard model parameters
+  x = x, 
+  y = y, 
+  training_frame = train_h2o, 
+  validation_frame = valid_h2o,
+  
+  ## more trees is better if the learning rate is small enough
+  ## use "more than enough" trees - we have early stopping
+  ntrees = 10000,                                                            
+  
+  ## smaller learning rate is better
+  ## since we have learning_rate_annealing, we can afford to start with a bigger learning rate
+  learn_rate = 0.05,                                                         
+  
+  ## learning rate annealing: learning_rate shrinks by 1% after every tree 
+  ## (use 1.00 to disable, but then lower the learning_rate)
+  learn_rate_annealing = 0.99,                                               
+  
+  ## early stopping based on timeout (no model should take more than 1 hour - modify as needed)
+  max_runtime_secs = 3600,                                                 
+  
+  ## early stopping once the validation AUC doesn't improve by at least 0.01% for 5 consecutive scoring events
+  stopping_rounds = 5, stopping_tolerance = 1e-4, stopping_metric = "AUC", 
+  
+  ## score every 10 trees to make early stopping reproducible (it depends on the scoring interval)
+  score_tree_interval = 10,                                                
+  
+  ## base random number generator seed for each model (automatically gets incremented internally for each model)
+  seed = 1234                                                             
+)
+
+## Sort the grid models by AUC
+sortedGrid <- h2o.getGrid("final_grid", sort_by = "auc", decreasing = TRUE)    
+sortedGrid
+
+for (i in 1:5) {
+  gbm <- h2o.getModel(sortedGrid@model_ids[[i]])
+  print(h2o.auc(h2o.performance(gbm, valid = TRUE)))
+}
+
+gbm <- h2o.getModel(sortedGrid@model_ids[[1]])
+print(h2o.auc(h2o.performance(gbm, newdata = test_h2o)))
+
+gbm@parameters
+
+model <- do.call(h2o.gbm,
+        ## update parameters in place
+        {
+          p <- gbm@parameters
+          p$model_id = NULL          ## do not overwrite the original grid model
+          p$training_frame = Data_h2o      ## use the full dataset
+          p$validation_frame = NULL  ## no validation frame
+          p$nfolds = 5               ## cross-validation
+          p
+        }
+)
+model@model$cross_validation_metrics_summary
+
+
+# GBM end --------------------------------------
+
+
+
+
+binomial.fit = h2o.glm(y = y, x = x, 
+    training_frame = train_h2o, validation_frame = valid_h2o, family = "binomial", nfolds = 5)
+print(binomial.fit)
+
+# Run the automated machine learning 
+automl_models_h2o <- h2o.automl(
+    x = x, 
+    y = y,
+    training_frame    = train_h2o,
+    leaderboard_frame = valid_h2o,
+    max_runtime_secs  = 30
+    )
+
+# Extract leader model
+automl_leader <- automl_models_h2o@leader
+automl_leader
+
+# Predict on hold-out set, test_h2o
+pred_h2o <- h2o.predict(object = automl_leader, newdata = test_h2o)
+
+# Prep for performance assessment
+test_performance <- test_h2o %>%
+    tibble::as_tibble() %>%
+    select(Attrition) %>%
+    add_column(pred = as.vector(pred_h2o$predict)) %>%
+    mutate_if(is.character, as.factor)
+test_performance
+
+# Confusion table counts
+test_performance %>%
+    table() 
+
+# Confusion table percentages
+test_performance %>%
+    table() %>%
+    prop.table()
+
+# Overall performance
+test_performance %>%
+    mutate(correct = case_when(
+        Attrition == pred ~ 1,
+        TRUE ~ 0
+    )) %>%
+    summarize(correct_pct = sum(correct) / n())
+
+class(automl_leader)
+
+# Setup lime::model_type() function for h2o
+model_type.H2OBinomialModel <- function(x, ...) {
+    # Function tells lime() what model type we are dealing with
+    # 'classification', 'regression', 'survival', 'clustering', 'multilabel', etc
+    #
+    # x is our h2o model
+    
+    return("classification")
+}
+
+# Setup lime::predict_model() function for h2o
+predict_model.H2OBinomialModel <- function(x, newdata, type, ...) {
+    # Function performs prediction and returns dataframe with Response
+    #
+    # x is h2o model
+    # newdata is data frame
+    # type is only setup for data frame
+    
+    pred <- h2o.predict(x, as.h2o(newdata))
+    
+    # return probs
+    return(as.data.frame(pred[,-1]))
+    
+}
+
+# Test our predict_model() function
+predict_model(x = automl_leader, newdata = as.data.frame(test_h2o[,-1]), type = 'raw') %>%
+    tibble::as_tibble()
+
+# Run lime() on training set
+explainer <- lime::lime(
+    as.data.frame(train_h2o[,-1]), 
+    model          = automl_leader, 
+    bin_continuous = FALSE)
+
+# Run explain() on explainer
+explanation <- lime::explain(
+    as.data.frame(test_h2o[1:10,-1]), 
+    explainer    = explainer, 
+    n_labels     = 1, 
+    n_features   = 4,
+    kernel_width = 0.5)
+
+plot_features(explanation, ncol = 1)
+
+# Focus on critical features of attrition
+attrition_critical_features <- Data %>%
+    tibble::as_tibble() %>%
+    select(Attrition, TrainingTimesLastYear, JobRole, OverTime) %>%
+    rowid_to_column(var = "Case")
+attrition_critical_features
+
+```
+
+```
+
+# H2o Default learners
+metalearner <- "h2o.glm.wrapper"
+
+default_learner <- c("h2o.glm.wrapper", "h2o.randomForest.wrapper", 
+             "h2o.gbm.wrapper", "h2o.deeplearning.wrapper")
+
+
+default_learner_fit <- h2o.ensemble(x = topImpVar, y = y, 
+                    training_frame = train_h2o, 
+                    family = 'binomial', 
+                    learner = default_learner, 
+                    metalearner = metalearner,
+                    cvControl = list(V = 5))
+
+# Check default learners Performance
+perf <- h2o.ensemble_performance(default_learner_fit, newdata = val_h2o)
+print(perf, metric = "AUC")
+
+
+
+# New learner fit (customize parameters)
+new_learner <- c("h2o.glm.wrapper",
+             "h2o.randomForest.1", "h2o.randomForest.2",
+             "h2o.gbm.1", "h2o.gbm.6", "h2o.gbm.8",
+             "h2o.deeplearning.1", "h2o.deeplearning.6", "h2o.deeplearning.7")
+
+
+new_learner_fit <- h2o.ensemble(x = topImpVar, y = y, 
+                    training_frame = train_h2o, 
+                    family = 'binomial', 
+                    learner = new_learner, 
+                    metalearner = metalearner,
+                    cvControl = list(V = 5))
+
+# Check new learners Performance
+perf <- h2o.ensemble_performance(new_learner_fit, newdata = val_h2o)
+print(perf, metric = "AUC")
+
+
+
+
+
+# Finalizing Models
+fit<-new_learner_fit
+learner<-new_learner
+
+#Check on Validation datasets
+valpred <- predict(fit, val_h2o)
+
+#third column is P(Y==1)
+valpredictions <- as.data.frame(valpred$pred)[,3]
+labels <- as.data.frame(val_h2o[,y])[,1]
+
+#AUC expected
+cvAUC::AUC(predictions = valpredictions, labels = labels)
+
+# Check how each learner did, tuning the parameters in the future
+L <- length(learner)
+L
+auc <- sapply(seq(L), function(l) cvAUC::AUC(predictions = as.data.frame(valpred$basepred)[,l], labels = labels)) 
+learner_auc<-data.frame(learner, auc)
+
+
+# Generate predictions on the test set:
+pred <- predict(fit, test_h2o)
+predictions <- as.data.frame(pred$pred)
+
+```
+
+# Generate output
+```{r Generate_output}
+# predictions<-sqldf('select Yes, prediction from predictions' )
+
+output_data <-function (data, predictions, filename) {
+  
+  predictions<-predictions %>% select(-No)
+  pred_result<-as.data.frame(predictions)
+  test_r<-as.data.frame(test_h2o)
+  output<-data.frame(test_r, pred_result)
+  write.csv(output,filename,row.names = FALSE )
+}
+
+output_data(test_h2o,predictions,"output_model.csv")
+
+```
+
+# Automate Parameter turning
+```{r}
+# automated parameter tuning of C5.0 decision tree 
+set.seed(1234)
+(l <- sapply(Data, function(x) is.factor(x))) # check variable whether is a factor
+f <- Data[, l]
+drop<-print.data.frame(ifelse(n <- sapply(f, function(x) length(levels(x))) == 1, "DROP", "NODROP")) # check which factor is ONE level
+drop
+m <- train(Attrition ~., data=Data[ ,!(names(Data) %in% c('Over18'))], method = "C5.0") # apply decision tree and removing factor is ONE level
+m
+
+```
+
+```{r}
+#library("knitr")
+#knit2html("file")
+#rmarkdown::render('file.rmd', output_format = 'html_document')
+```
+
+# Discussion
+
+
+
+
